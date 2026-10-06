@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { StaffRegistrationAPI } from '../../services/staffRegistrationAPI';
+import { StaffRegistrationAPI, ORG_ID, generateUuid, isUuid } from '../../services/staffRegistrationAPI';
 import { 
   Camera, 
   X, 
@@ -23,11 +23,15 @@ export default function AddStaffRegistrationPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);   // stream kept in a ref so re-renders never stop it
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isVideoReady, setIsVideoReady] = useState(false);
   const [capturedPhotos, setCapturedPhotos] = useState<CapturedPhoto[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mounted, setMounted] = useState(false);   // client-only (avoids SSR window/navigator access)
+
+  useEffect(() => { setMounted(true); }, []);
   
   // Notification state
   const [notification, setNotification] = useState<{
@@ -36,10 +40,11 @@ export default function AddStaffRegistrationPage() {
     show: boolean;
   }>({ type: 'info', message: '', show: false });
   
-  // Form data - only staff_id, staff_name needed for backend
+  // Form data — employee UUID + name + organization UUID for the backend
   const [formData, setFormData] = useState({
-    staffId: '',
-    staffName: ''
+    employeeId: '',
+    employeeName: '',
+    organizationId: ORG_ID,
   });
 
   const [errors, setErrors] = useState<{[key: string]: string}>({});
@@ -53,177 +58,56 @@ export default function AddStaffRegistrationPage() {
   };
 
   // Camera functions
-  const startCamera = useCallback(async () => {
+  const startCamera = async () => {
     try {
-      showNotification('info', 'Requesting camera access...');
-      console.log('Starting camera initialization...');
-      
-      // Check browser support
-      if (!navigator.mediaDevices) {
-        throw new Error('Media devices not supported. Please use HTTPS or a modern browser.');
+      if (!navigator.mediaDevices?.getUserMedia) {
+        showNotification('error', 'Camera not supported in this browser (use HTTPS or localhost).');
+        return;
       }
-      
-      if (!navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera API not supported by this browser');
-      }
-      
-      // Stop any existing stream first
-      if (stream) {
-        console.log('Stopping existing stream...');
-        stream.getTracks().forEach(track => track.stop());
-      }
-      
-      // List available cameras for debugging
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        console.log('Available cameras:', videoDevices.length);
-      } catch (enumError) {
-        console.log('Could not enumerate devices:', enumError);
-      }
-      
-      console.log('Requesting camera stream...');
-      
-      // Try basic camera access first
-      let mediaStream;
-      try {
-        // Try with basic constraints first
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false
-        });
-        console.log('Basic camera access successful');
-      } catch (basicError) {
-        console.log('Basic camera failed, trying with specific constraints:', basicError);
-        // Try with more specific constraints
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            width: { ideal: 640 }, 
-            height: { ideal: 480 }
-          },
-          audio: false
-        });
-      }
-      
-      if (!mediaStream) {
-        throw new Error('Failed to get camera stream');
-      }
-      
-      console.log('Camera stream obtained, setting up video...');
-      
-      if (videoRef.current) {
-        const video = videoRef.current;
-        
-        // Reset video element
-        video.srcObject = null;
-        video.load();
-        
-        // Set the stream
-        video.srcObject = mediaStream;
-        
-        // Simple approach - just wait for the video to load
-        const videoPromise = new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Video loading timeout'));
-          }, 15000); // 15 second timeout
-          
-          const onLoadedMetadata = () => {
-            clearTimeout(timeout);
-            console.log('Video metadata loaded:', video.videoWidth, 'x', video.videoHeight);
-            resolve();
-          };
-          
-          const onError = () => {
-            clearTimeout(timeout);
-            reject(new Error('Video loading error'));
-          };
-          
-          video.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-          video.addEventListener('error', onError, { once: true });
-        });
-        
-        // Start playing
-        try {
-          await video.play();
-          console.log('Video play started');
-        } catch (playError) {
-          console.log('Auto-play prevented, but continuing...');
-        }
-        
-        // Wait for metadata or timeout
-        try {
-          await videoPromise;
-          
-          // Give video a moment to stabilize
-          setTimeout(() => {
-            if (video.videoWidth > 0 && video.videoHeight > 0) {
-              setIsVideoReady(true);
-              showNotification('success', 'Camera ready! You can now capture photos.');
-            } else {
-              // Enable capture anyway after 2 seconds
-              setTimeout(() => {
-                setIsVideoReady(true);
-                showNotification('success', 'Camera started! Try capturing photos.');
-              }, 2000);
-            }
-          }, 1000);
-          
-        } catch (videoError) {
-          console.log('Video promise failed, enabling capture anyway:', videoError);
-          setIsVideoReady(true);
-          showNotification('info', 'Camera may be ready - try capturing photos.');
-        }
-      }
-      
-      setStream(mediaStream);
-      setIsCameraOn(true);
-      
-      console.log('Camera initialization complete');
-      
-      // Debug: Log stream details
-      if (mediaStream) {
-        const tracks = mediaStream.getVideoTracks();
-        console.log('Video tracks:', tracks.length);
-        if (tracks.length > 0) {
-          console.log('Track settings:', tracks[0].getSettings());
-          console.log('Track constraints:', tracks[0].getConstraints());
-        }
-      }
-      
-    } catch (error) {
-      console.error('Camera error details:', error);
-      let errorMessage = 'Camera access failed: ';
-      
-      if (error instanceof Error) {
-        if (error.name === 'NotAllowedError') {
-          errorMessage = 'Camera access denied. Please click the camera icon in your browser address bar and allow camera access, then try again.';
-        } else if (error.name === 'NotFoundError') {
-          errorMessage = 'No camera found. Please connect a camera and try again.';
-        } else if (error.name === 'NotReadableError') {
-          errorMessage = 'Camera is being used by another application. Please close other camera apps and try again.';
-        } else if (error.name === 'OverconstrainedError') {
-          errorMessage = 'Camera settings not supported. Try a different browser or camera.';
-        } else if (error.message.includes('HTTPS') || error.message.includes('secure')) {
-          errorMessage = 'Camera requires HTTPS. Please access this page with https:// or use localhost.';
-        } else {
-          errorMessage += error.message;
-        }
-      }
-      
-      showNotification('error', errorMessage);
-      setIsCameraOn(false);
-      setIsVideoReady(false);
-    }
-  }, [stream]);
+      // Stop any existing stream first.
+      streamRef.current?.getTracks().forEach(track => track.stop());
 
-  const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
+      let mediaStream: MediaStream;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        });
+      } catch {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
+      streamRef.current = mediaStream;
+      setStream(mediaStream);
+      setIsCameraOn(true);           // the <video> mounts now; the effect below attaches the stream
+      showNotification('info', 'Camera starting…');
+    } catch (error: any) {
+      const name = error?.name;
+      if (name === 'NotAllowedError') showNotification('error', 'Camera denied. Allow it in the address bar and retry.');
+      else if (name === 'NotFoundError') showNotification('error', 'No camera found.');
+      else if (name === 'NotReadableError') showNotification('error', 'Camera is in use by another app. Close it and retry.');
+      else showNotification('error', 'Camera access failed.');
       setIsCameraOn(false);
       setIsVideoReady(false);
     }
-  }, [stream]);
+  };
+
+  // Attach the stream to the video once it is mounted (after isCameraOn flips true).
+  useEffect(() => {
+    if (isCameraOn && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [isCameraOn]);
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setStream(null);
+    setIsCameraOn(false);
+    setIsVideoReady(false);
+  };
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) {
@@ -309,15 +193,21 @@ export default function AddStaffRegistrationPage() {
 
   const validateForm = () => {
     const newErrors: {[key: string]: string} = {};
-    
-    if (!formData.staffId.trim()) {
-      newErrors.staffId = 'Staff ID is required';
+
+    if (!formData.employeeId.trim()) {
+      newErrors.employeeId = 'Employee ID (UUID) is required';
+    } else if (!isUuid(formData.employeeId)) {
+      newErrors.employeeId = 'Employee ID must be a valid UUID';
     }
-    
-    if (!formData.staffName.trim()) {
-      newErrors.staffName = 'Staff name is required';
+
+    if (!formData.employeeName.trim()) {
+      newErrors.employeeName = 'Employee name is required';
     }
-    
+
+    if (!formData.organizationId.trim() || !isUuid(formData.organizationId)) {
+      newErrors.organizationId = 'Organization ID must be a valid UUID';
+    }
+
     if (capturedPhotos.length < 5) {
       newErrors.photos = 'Minimum 5 photos are required';
     }
@@ -344,16 +234,11 @@ export default function AddStaffRegistrationPage() {
     try {
       // Prepare data for API
       const registrationData = {
-        staff_id: formData.staffId,
-        staff_name: formData.staffName,
+        employee_id: formData.employeeId,
+        employee_name: formData.employeeName,
+        organization_id: formData.organizationId,
         images: capturedPhotos.map(photo => photo.blob)
       };
-
-      console.log('Submitting data:', {
-        staff_id: registrationData.staff_id,
-        staff_name: registrationData.staff_name,
-        images_count: registrationData.images.length
-      });
 
       // Use the API service
       const result = await StaffRegistrationAPI.registerStaff(registrationData);
@@ -378,11 +263,13 @@ export default function AddStaffRegistrationPage() {
   };
 
   // Cleanup camera on unmount
+  // Stop the camera only when the page unmounts (not on every state change).
   useEffect(() => {
     return () => {
-      stopCamera();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
     };
-  }, [stopCamera]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -412,30 +299,40 @@ export default function AddStaffRegistrationPage() {
             <ArrowLeft className="h-5 w-5 mr-1" />
             Back
           </button>
-          <h1 className="text-2xl font-bold text-gray-900">Add New Staff Registration</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Add New Employee Registration</h1>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Form Section */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Staff Information</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Employee Information</h2>
             
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Staff ID *
+                  Employee ID (UUID) *
                 </label>
-                <input
-                  type="text"
-                  value={formData.staffId}
-                  onChange={(e) => setFormData(prev => ({ ...prev, staffId: e.target.value }))}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                    errors.staffId ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                  placeholder="Enter staff ID (e.g., STF001)"
-                />
-                {errors.staffId && (
-                  <p className="text-red-500 text-sm mt-1">{errors.staffId}</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={formData.employeeId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, employeeId: e.target.value }))}
+                    className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm ${
+                      errors.employeeId ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    placeholder="Paste HRMS employee UUID"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, employeeId: generateUuid() }))}
+                    className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-200 whitespace-nowrap"
+                    title="Generate a UUID (for testing)"
+                  >
+                    Generate
+                  </button>
+                </div>
+                {errors.employeeId && (
+                  <p className="text-red-500 text-sm mt-1">{errors.employeeId}</p>
                 )}
               </div>
 
@@ -445,15 +342,33 @@ export default function AddStaffRegistrationPage() {
                 </label>
                 <input
                   type="text"
-                  value={formData.staffName}
-                  onChange={(e) => setFormData(prev => ({ ...prev, staffName: e.target.value }))}
+                  value={formData.employeeName}
+                  onChange={(e) => setFormData(prev => ({ ...prev, employeeName: e.target.value }))}
                   className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                    errors.staffName ? 'border-red-500' : 'border-gray-300'
+                    errors.employeeName ? 'border-red-500' : 'border-gray-300'
                   }`}
                   placeholder="Enter full name"
                 />
-                {errors.staffName && (
-                  <p className="text-red-500 text-sm mt-1">{errors.staffName}</p>
+                {errors.employeeName && (
+                  <p className="text-red-500 text-sm mt-1">{errors.employeeName}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Organization ID (UUID) *
+                </label>
+                <input
+                  type="text"
+                  value={formData.organizationId}
+                  onChange={(e) => setFormData(prev => ({ ...prev, organizationId: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm ${
+                    errors.organizationId ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                  placeholder="Organization UUID"
+                />
+                {errors.organizationId && (
+                  <p className="text-red-500 text-sm mt-1">{errors.organizationId}</p>
                 )}
               </div>
             </div>
@@ -464,6 +379,7 @@ export default function AddStaffRegistrationPage() {
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Face Recognition Photos</h2>
             
             {/* Debug Info */}
+            {mounted && (
             <div className="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -484,6 +400,7 @@ export default function AddStaffRegistrationPage() {
                 </div>
               </div>
             </div>
+            )}
 
             {/* Camera Controls */}
             <div className="mb-4">
@@ -505,7 +422,7 @@ export default function AddStaffRegistrationPage() {
                       <li>Close other camera apps (Zoom, Teams, etc.)</li>
                       <li>Try refreshing the page</li>
                       <li>Use Chrome or Edge browser</li>
-                      {window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && (
+                      {mounted && window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && (
                         <li className="text-red-600">⚠️ Use HTTPS or localhost for camera access</li>
                       )}
                     </ul>
@@ -795,7 +712,7 @@ export default function AddStaffRegistrationPage() {
             ) : (
               <>
                 <Check className="h-5 w-5 mr-2" />
-                Register Staff
+                Register Employee
               </>
             )}
           </button>

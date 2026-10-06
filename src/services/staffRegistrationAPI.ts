@@ -1,246 +1,264 @@
-// API service for staff registration with face recognition backend
+// API service for employee face enrollment + verification (HRMS face service).
+//
+// Backend endpoints (see project_face-recognition):
+//   POST   /face/enroll                   employee_id, employee_name, organization_id, images[]
+//   POST   /face/verify                   image  (1:N, returns matched employee)
+//   GET    /face/employees                list enrolled employees (tenant-scoped)
+//   DELETE /face/employees/{employee_id}  delete an employee's faces
+//
+// Identity is multi-tenant: every call sends X-Tenant-Id (and X-Actor-Id for
+// created_by). In production these come from the logged-in HRMS JWT; here they
+// come from env so the admin tool works standalone.
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-export interface RegisterStaffData {
-  staff_id: string;
-  staff_name: string;
+// Demo UUIDs — override in .env.local with your real HRMS tenant/org/user ids.
+export const TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID || '11111111-1111-1111-1111-111111111111';
+export const ORG_ID = process.env.NEXT_PUBLIC_ORG_ID || '22222222-2222-2222-2222-222222222222';
+export const ACTOR_ID = process.env.NEXT_PUBLIC_ACTOR_ID || '99999999-9999-9999-9999-999999999999';
+
+function authHeaders(): Record<string, string> {
+  return { 'X-Tenant-Id': TENANT_ID, 'X-Actor-Id': ACTOR_ID };
+}
+
+export interface RegisterEmployeeData {
+  employee_id: string;        // UUID (HRMS employees.id)
+  employee_name: string;
+  organization_id?: string;   // UUID; defaults to ORG_ID
   images: File[] | Blob[];
 }
 
-export interface ApiResponse {
-  message: string;
+export interface ApiResponse<T = any> {
   success: boolean;
-  data?: any;
+  message: string;
+  data?: T;
   error?: string;
 }
 
-export class StaffRegistrationAPI {
-  static async registerStaff(data: RegisterStaffData): Promise<ApiResponse> {
-    try {
-      console.log('🚀 Starting staff registration API call...');
-      console.log('📊 Data summary:', {
-        staff_id: data.staff_id,
-        staff_name: data.staff_name,
-        images_count: data.images.length,
-        api_url: `${API_BASE_URL}/face/register`
-      });
+export interface VerifyResult {
+  verified: boolean;
+  employee_id: string;
+  employee_name: string;
+  organization_id: string;
+  cosine: number;             // similarity 0..1 (higher = better)
+  passive_score: number | null;
+}
 
+async function parseJson(res: Response) {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+function errorText(body: any): string {
+  // FastAPI puts messages in `detail` (string or object).
+  const d = body?.detail;
+  if (typeof d === 'string') return d;
+  if (d) return JSON.stringify(d);
+  return 'Unknown error';
+}
+
+export class StaffRegistrationAPI {
+  /** Enroll an employee with one or more captured photos. */
+  static async registerStaff(data: RegisterEmployeeData): Promise<ApiResponse> {
+    try {
       const formData = new FormData();
-      formData.append('staff_id', data.staff_id);
-      formData.append('staff_name', data.staff_name);
-      
-      // Add all images to FormData
+      formData.append('employee_id', data.employee_id);
+      formData.append('employee_name', data.employee_name);
+      formData.append('organization_id', data.organization_id || ORG_ID);
+
       data.images.forEach((image, index) => {
         if (image instanceof File) {
-          formData.append('image', image);
-          console.log(`📷 Added File ${index + 1}: ${image.name} (${image.size} bytes)`);
-        } else if (image instanceof Blob) {
-          formData.append('image', image, `photo_${index + 1}.jpg`);
-          console.log(`📷 Added Blob ${index + 1}: photo_${index + 1}.jpg (${image.size} bytes)`);
+          formData.append('images', image);
+        } else {
+          formData.append('images', image, `photo_${index + 1}.jpg`);
         }
       });
 
-      console.log('📤 Sending POST request to:', `${API_BASE_URL}/face/register`);
-      
-      const response = await fetch(`${API_BASE_URL}/face/register`, {
+      const res = await fetch(`${API_BASE_URL}/face/enroll`, {
         method: 'POST',
+        headers: authHeaders(), // do NOT set Content-Type; browser adds the boundary
         body: formData,
-        // Don't set Content-Type header, let browser set it with boundary
       });
-      
-      console.log('📥 Response status:', response.status, response.statusText);
+      const body = await parseJson(res);
 
-      const responseData = await response.json();
-
-      if (response.ok) {
-        return {
-          success: true,
-          message: responseData.message || 'Staff registered successfully',
-          data: responseData
-        };
-      } else {
-        return {
-          success: false,
-          message: 'Registration failed',
-          error: responseData.detail || 'Unknown error occurred'
-        };
+      if (res.ok) {
+        return { success: true, message: `Enrolled ${body.enrolled_images} photo(s)`, data: body };
       }
+      return { success: false, message: 'Enrollment failed', error: errorText(body) };
     } catch (error) {
-      console.error('API Error:', error);
       return {
         success: false,
         message: 'Network error',
-        error: error instanceof Error ? error.message : 'Connection failed'
+        error: error instanceof Error ? error.message : 'Connection failed',
       };
     }
   }
 
-  static async verifyStaff(staffId: string, image: File | Blob): Promise<ApiResponse> {
+  /** 1:N verify: identify who a captured face belongs to. */
+  static async verifyStaff(image: File | Blob, organizationId?: string): Promise<ApiResponse<VerifyResult>> {
     try {
       const formData = new FormData();
-      formData.append('staff_id', staffId);
-      
-      if (image instanceof File) {
-        formData.append('image', image);
-      } else if (image instanceof Blob) {
-        formData.append('image', image, 'verification.jpg');
-      }
+      if (image instanceof File) formData.append('image', image);
+      else formData.append('image', image, 'verification.jpg');
 
-      const response = await fetch(`${API_BASE_URL}/face/verify`, {
+      const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+      const res = await fetch(`${API_BASE_URL}/face/verify${qs}`, {
         method: 'POST',
+        headers: authHeaders(),
         body: formData,
       });
+      const body = await parseJson(res);
 
-      const responseData = await response.json();
-
-      if (response.ok) {
-        return {
-          success: true,
-          message: 'Verification successful',
-          data: responseData
-        };
-      } else {
-        return {
-          success: false,
-          message: 'Verification failed',
-          error: responseData.detail || 'Verification unsuccessful'
-        };
+      if (res.ok) {
+        return { success: true, message: 'Verification successful', data: body };
       }
+      // 422 no_match / liveness_failed etc. — treat as "not verified", not a crash.
+      return { success: false, message: 'No match', error: errorText(body) };
     } catch (error) {
-      console.error('Verification Error:', error);
       return {
         success: false,
         message: 'Verification error',
-        error: error instanceof Error ? error.message : 'Connection failed'
+        error: error instanceof Error ? error.message : 'Connection failed',
       };
     }
   }
 
+  /** Liveness step 1: ask the backend for a random head-turn challenge. */
+  static async startLivenessChallenge(): Promise<ApiResponse<{ challenge_id: string; action: string; prompt: string; ttl_seconds: number }>> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/face/punch/challenge`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const body = await parseJson(res);
+      if (res.ok) return { success: true, message: 'ok', data: body };
+      return { success: false, message: 'Could not start challenge', error: errorText(body) };
+    } catch (error) {
+      return { success: false, message: 'Network error', error: error instanceof Error ? error.message : 'Connection failed' };
+    }
+  }
+
+  /** Liveness step 2: submit the frame burst for the challenge; returns matched employee. */
+  static async verifyLiveness(challengeId: string, frames: Blob[], organizationId?: string): Promise<ApiResponse<VerifyResult & { active_passed: boolean }>> {
+    try {
+      const formData = new FormData();
+      formData.append('challenge_id', challengeId);
+      if (organizationId) formData.append('organization_id', organizationId);
+      frames.forEach((f, i) => formData.append('frames', f, `frame_${i + 1}.jpg`));
+
+      const res = await fetch(`${API_BASE_URL}/face/punch/verify`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: formData,
+      });
+      const body = await parseJson(res);
+      if (res.ok) return { success: true, message: 'Liveness + identity verified', data: body };
+      return { success: false, message: 'Liveness/verify failed', error: errorText(body) };
+    } catch (error) {
+      return { success: false, message: 'Network error', error: error instanceof Error ? error.message : 'Connection failed' };
+    }
+  }
+
+  /** 1:1 verification: liveness + match ONLY against the given employee_id. */
+  static async verifyEmployee(employeeId: string, challengeId: string, frames: Blob[], organizationId?: string): Promise<ApiResponse<VerifyResult & { active_passed: boolean }>> {
+    try {
+      const formData = new FormData();
+      formData.append('employee_id', employeeId);
+      formData.append('challenge_id', challengeId);
+      if (organizationId) formData.append('organization_id', organizationId);
+      frames.forEach((f, i) => formData.append('frames', f, `frame_${i + 1}.jpg`));
+
+      const res = await fetch(`${API_BASE_URL}/face/verify-employee`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: formData,
+      });
+      const body = await parseJson(res);
+      if (res.ok) return { success: true, message: 'Verified', data: body };
+      return { success: false, message: 'Verification failed', error: errorText(body) };
+    } catch (error) {
+      return { success: false, message: 'Network error', error: error instanceof Error ? error.message : 'Connection failed' };
+    }
+  }
+
+  /** Recent verification attempts (for the dashboard activity feed). */
+  static async getRecentVerifications(limit = 8): Promise<ApiResponse> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/face/recent?limit=${limit}`, { headers: authHeaders() });
+      const body = await parseJson(res);
+      if (res.ok) return { success: true, message: 'ok', data: body };
+      return { success: false, message: 'Failed to load activity', error: errorText(body) };
+    } catch (error) {
+      return {
+        success: false,
+        message: 'Network error',
+        error: error instanceof Error ? error.message : 'Connection failed',
+      };
+    }
+  }
+
+  /** List enrolled employees for the current tenant. */
   static async getStaffList(): Promise<ApiResponse> {
     try {
-      const response = await fetch(`${API_BASE_URL}/face/staff`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      const responseData = await response.json();
-
-      if (response.ok) {
-        return {
-          success: true,
-          message: 'Staff list retrieved successfully',
-          data: responseData
-        };
-      } else {
-        return {
-          success: false,
-          message: 'Failed to retrieve staff list',
-          error: responseData.detail || 'Unknown error'
-        };
-      }
+      const res = await fetch(`${API_BASE_URL}/face/employees`, { headers: authHeaders() });
+      const body = await parseJson(res);
+      if (res.ok) return { success: true, message: 'ok', data: body };
+      return { success: false, message: 'Failed to list employees', error: errorText(body) };
     } catch (error) {
-      console.error('API Error:', error);
       return {
         success: false,
         message: 'Network error',
-        error: error instanceof Error ? error.message : 'Connection failed'
+        error: error instanceof Error ? error.message : 'Connection failed',
       };
     }
   }
 
-  static async deleteStaff(staffId: string): Promise<ApiResponse> {
+  /** Delete an employee's enrolled faces (right to erasure). */
+  static async deleteStaff(employeeId: string): Promise<ApiResponse> {
     try {
-      const response = await fetch(`${API_BASE_URL}/face/staff/${staffId}`, {
+      const res = await fetch(`${API_BASE_URL}/face/employees/${employeeId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: authHeaders(),
       });
-
-      if (response.ok) {
-        return {
-          success: true,
-          message: 'Staff deleted successfully'
-        };
-      } else {
-        const responseData = await response.json();
-        return {
-          success: false,
-          message: 'Failed to delete staff',
-          error: responseData.detail || 'Unknown error'
-        };
-      }
+      const body = await parseJson(res);
+      if (res.ok) return { success: true, message: 'Deleted', data: body };
+      return { success: false, message: 'Failed to delete', error: errorText(body) };
     } catch (error) {
-      console.error('Delete Error:', error);
       return {
         success: false,
         message: 'Network error',
-        error: error instanceof Error ? error.message : 'Connection failed'
+        error: error instanceof Error ? error.message : 'Connection failed',
       };
     }
   }
 }
 
-// Utility functions for image handling
+// ---- helpers ----
+export function generateUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  // Fallback RFC4122 v4
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+export function isUuid(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+}
+
 export class ImageUtils {
   static async blobToFile(blob: Blob, filename: string): Promise<File> {
     return new File([blob], filename, { type: blob.type });
   }
 
-  static async resizeImage(file: File, maxWidth: number = 800, maxHeight: number = 600, quality: number = 0.8): Promise<Blob> {
-    return new Promise((resolve) => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d')!;
-      const img = new Image();
-
-      img.onload = () => {
-        // Calculate new dimensions
-        let { width, height } = img;
-        
-        if (width > height) {
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxHeight) {
-            width = (width * maxHeight) / height;
-            height = maxHeight;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-
-        // Draw and compress
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => {
-            resolve(blob!);
-          },
-          'image/jpeg',
-          quality
-        );
-      };
-
-      img.src = URL.createObjectURL(file);
-    });
-  }
-
   static validateImageFile(file: File): { valid: boolean; error?: string } {
-    // Check file type
-    if (!file.type.startsWith('image/')) {
-      return { valid: false, error: 'File must be an image' };
-    }
-
-    // Check file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      return { valid: false, error: 'Image size must be less than 5MB' };
-    }
-
+    if (!file.type.startsWith('image/')) return { valid: false, error: 'File must be an image' };
+    if (file.size > 5 * 1024 * 1024) return { valid: false, error: 'Image size must be less than 5MB' };
     return { valid: true };
   }
 }

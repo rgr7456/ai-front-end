@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useSelector, useDispatch } from "react-redux";
 import { RootState } from "@/src/store";
 import { loggedOut } from "@/src/store/slices/authSlice";
@@ -14,6 +14,7 @@ import {
   Settings,
   BarChart3,
   FileText,
+  ScanLine,
   User,
   ChevronDown,
   ChevronUp,
@@ -28,6 +29,7 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const dispatch = useDispatch();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -39,19 +41,18 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
   };
 
   const navigationItems = [
-    { 
-      title: "Dashboard", 
-      icon: Home, 
-      href: "/dashboard",
-      isActive: true
+    {
+      title: "Dashboard",
+      icon: Home,
+      href: "/dashboard"
     },
     { 
-      title: "Staff Registration", 
+      title: "Employee Registration", 
       icon: UserPlus, 
       href: "/staff_register"
     },
     { 
-      title: "Staff Attendance", 
+      title: "Employee Attendance", 
       icon: Clock, 
       href: "/staff_attendance"
     },
@@ -60,13 +61,18 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
       icon: Shield, 
       href: "/admin_creation"
     },
-    { 
-      title: "Staff Management", 
-      icon: Users, 
+    {
+      title: "Employee Management",
+      icon: Users,
       href: "/staff_management"
     },
-    { 
-      title: "Reports", 
+    {
+      title: "KYC Documents",
+      icon: ScanLine,
+      href: "/kyc-verification"
+    },
+    {
+      title: "Reports",
       icon: BarChart3, 
       href: "/reports"
     }
@@ -84,7 +90,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
       <div className="p-4 border-b">
         <div className="flex items-center justify-between">
           <div className={`${isOpen ? 'block' : 'hidden'}`}>
-            <h2 className="text-lg font-bold text-gray-900">Staff System</h2>
+            <h2 className="text-lg font-bold text-gray-900">Employee System</h2>
           </div>
           <button
             onClick={onToggle}
@@ -103,8 +109,8 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
               key={item.title}
               onClick={() => router.push(item.href)}
               className={`w-full flex items-center px-3 py-2 rounded-lg transition-colors ${
-                item.isActive 
-                  ? 'bg-blue-100 text-blue-600' 
+                pathname === item.href
+                  ? 'bg-blue-100 text-blue-600'
                   : 'text-gray-700 hover:bg-gray-100'
               }`}
             >

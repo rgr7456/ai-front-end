@@ -1,8 +1,8 @@
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Staff Attendance | Staff Management System',
-  description: 'Track and manage staff attendance',
+  title: 'Employee Attendance | Employee Management System',
+  description: 'Track and manage employee attendance',
 }
 
 export default function StaffAttendancePage() {
@@ -10,7 +10,7 @@ export default function StaffAttendancePage() {
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="bg-white rounded-lg shadow p-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">Staff Attendance</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-6">Employee Attendance</h1>
           <p className="text-gray-600">This page will contain attendance tracking and management features.</p>
           
           <div className="mt-8 p-4 bg-green-50 rounded-lg">

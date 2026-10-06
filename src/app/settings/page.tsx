@@ -1,7 +1,7 @@
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Settings | Staff Management System',
+  title: 'Settings | Employee Management System',
   description: 'System configuration and preferences',
 }
 

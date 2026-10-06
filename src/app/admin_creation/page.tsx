@@ -1,7 +1,7 @@
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Admin Creation | Staff Management System',
+  title: 'Admin Creation | Employee Management System',
   description: 'Create and manage administrator accounts',
 }
 

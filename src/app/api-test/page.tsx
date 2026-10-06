@@ -19,7 +19,7 @@ export default function APITestPage() {
     setTestResults({ connection: 'pending', message: 'Testing API connection...' });
 
     try {
-      // Test with a simple staff list request
+      // Test with a simple employee list request
       const result = await StaffRegistrationAPI.getStaffList();
       
       if (result.success) {
@@ -108,10 +108,10 @@ export default function APITestPage() {
             <div className="mt-6 p-4 bg-blue-50 rounded-lg">
               <h3 className="font-medium text-blue-900 mb-2">Expected API Endpoints:</h3>
               <ul className="text-sm text-blue-800 space-y-1">
-                <li><code className="bg-blue-100 px-2 py-1 rounded">POST /register</code> - Register new staff with photos</li>
-                <li><code className="bg-blue-100 px-2 py-1 rounded">POST /verify</code> - Verify staff identity</li>
-                <li><code className="bg-blue-100 px-2 py-1 rounded">GET /staff</code> - Get staff list</li>
-                <li><code className="bg-blue-100 px-2 py-1 rounded">DELETE /staff/:id</code> - Delete staff record</li>
+                <li><code className="bg-blue-100 px-2 py-1 rounded">POST /register</code> - Register new employee with photos</li>
+                <li><code className="bg-blue-100 px-2 py-1 rounded">POST /verify</code> - Verify employee identity</li>
+                <li><code className="bg-blue-100 px-2 py-1 rounded">GET /employee</code> - Get employee list</li>
+                <li><code className="bg-blue-100 px-2 py-1 rounded">DELETE /employee/:id</code> - Delete employee record</li>
               </ul>
             </div>
 

@@ -1,8 +1,8 @@
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Reports | Staff Management System',
-  description: 'Generate attendance and staff reports',
+  title: 'Reports | Employee Management System',
+  description: 'Generate attendance and employee reports',
 }
 
 export default function ReportsPage() {
@@ -18,7 +18,7 @@ export default function ReportsPage() {
             <p className="text-indigo-700">The reporting system will include:</p>
             <ul className="list-disc list-inside text-indigo-700 mt-2">
               <li>Daily/Weekly/Monthly attendance reports</li>
-              <li>Staff performance analytics</li>
+              <li>Employee performance analytics</li>
               <li>Department-wise reports</li>
               <li>Leave and absence reports</li>
               <li>Payroll preparation reports</li>
