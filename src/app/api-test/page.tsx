@@ -25,7 +25,7 @@ export default function APITestPage() {
       if (result.success) {
         setTestResults({
           connection: 'success',
-          message: `✅ API Connected Successfully! Backend is running at ${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}`
+          message: `✅ API Connected Successfully! Backend is running at ${process.env.NEXT_PUBLIC_API_URL || 'https://ai-chat-bot-jx9w.onrender.com'}`
         });
       } else {
         setTestResults({
@@ -66,7 +66,7 @@ export default function APITestPage() {
             <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
               <div>
                 <p className="font-medium text-gray-900">API Endpoint</p>
-                <p className="text-sm text-gray-600">{process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}</p>
+                <p className="text-sm text-gray-600">{process.env.NEXT_PUBLIC_API_URL || 'https://ai-chat-bot-jx9w.onrender.com'}</p>
               </div>
               <button
                 onClick={testAPIConnection}

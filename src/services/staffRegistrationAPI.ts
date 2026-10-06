@@ -10,7 +10,7 @@
 // created_by). In production these come from the logged-in HRMS JWT; here they
 // come from env so the admin tool works standalone.
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ai-chat-bot-jx9w.onrender.com';
 
 // Demo UUIDs — override in .env.local with your real HRMS tenant/org/user ids.
 export const TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID || '11111111-1111-1111-1111-111111111111';

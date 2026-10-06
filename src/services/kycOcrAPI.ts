@@ -10,7 +10,7 @@
 
 import { TENANT_ID, ACTOR_ID } from './staffRegistrationAPI';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ai-chat-bot-jx9w.onrender.com';
 
 function authHeaders(): Record<string, string> {
   return { 'X-Tenant-Id': TENANT_ID, 'X-Actor-Id': ACTOR_ID };
